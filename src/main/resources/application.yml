@@ -1,6 +1,8 @@
 spring:
   application:
     name: wu-ai-code
+  profiles:
+    active: local
   # mysql
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
