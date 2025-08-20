@@ -32,7 +32,7 @@ public class AiCodeGeneratorFacade {
      * @param codeGenType
      * @return
      */
-    public File generateCodeAndSave(String userMessage, CodeGenTypeEnum codeGenType){
+    public File generateCodeAndSave(String userMessage, CodeGenTypeEnum codeGenType,Long appId){
 
         if(codeGenType==null){
             throw new BusinessException(ErrorCode.SYSTEM_ERROR,"未知的代码生成类型");
@@ -40,11 +40,11 @@ public class AiCodeGeneratorFacade {
         return switch (codeGenType){
             case HTML -> {
                 HtmlCodeResult htmlCodeResult = aiCodeGeneratorService.generateHtmlCode(userMessage);
-                yield  CodeFileSaveExecutor.codeFileSaveExecutor(htmlCodeResult,CodeGenTypeEnum.HTML);
+                yield  CodeFileSaveExecutor.codeFileSaveExecutor(htmlCodeResult,CodeGenTypeEnum.HTML,appId);
             }
             case MULTI_FILE -> {
                 MultiFileCodeResult multiFileCodeResult = aiCodeGeneratorService.generateMultFileCode(userMessage);
-                yield  CodeFileSaveExecutor.codeFileSaveExecutor(multiFileCodeResult,CodeGenTypeEnum.MULTI_FILE);
+                yield  CodeFileSaveExecutor.codeFileSaveExecutor(multiFileCodeResult,CodeGenTypeEnum.MULTI_FILE,appId);
             }
             default -> {
                 throw new BusinessException(ErrorCode.SYSTEM_ERROR,"未知的代码生成类型");
@@ -68,7 +68,7 @@ public class AiCodeGeneratorFacade {
      * @param codeGenType
      * @return
      */
-    public Flux<String> generateCodeAndSaveStream(String userMessage, CodeGenTypeEnum codeGenType){
+    public Flux<String> generateCodeAndSaveStream(String userMessage, CodeGenTypeEnum codeGenType,Long appId){
 
         if(codeGenType==null){
             throw new BusinessException(ErrorCode.SYSTEM_ERROR,"未知的代码生成类型");
@@ -76,11 +76,11 @@ public class AiCodeGeneratorFacade {
         return switch (codeGenType){
             case HTML -> {
                 Flux<String> htmlStream = aiCodeGeneratorService.generateHtmlCodeStream(userMessage);
-                yield  generateAndSaveStream(htmlStream, CodeGenTypeEnum.HTML);
+                yield  generateAndSaveStream(htmlStream, CodeGenTypeEnum.HTML,appId);
             }
             case MULTI_FILE -> {
                 Flux<String> multFileStream = aiCodeGeneratorService.generateMultFileCodeStream(userMessage);
-                yield  generateAndSaveStream(multFileStream, CodeGenTypeEnum.MULTI_FILE);
+                yield  generateAndSaveStream(multFileStream, CodeGenTypeEnum.MULTI_FILE,appId);
             }
             default -> {
                 throw new BusinessException(ErrorCode.SYSTEM_ERROR,"未知的代码生成类型");
@@ -88,7 +88,7 @@ public class AiCodeGeneratorFacade {
         };
     }
 
-    private Flux<String> generateAndSaveStream(Flux<String> userMessageStream,CodeGenTypeEnum codeGenType) {
+    private Flux<String> generateAndSaveStream(Flux<String> userMessageStream,CodeGenTypeEnum codeGenType,Long appId) {
 
         StringBuilder stringBuilder = new StringBuilder();
         return userMessageStream.doOnNext(chunk->{
@@ -99,7 +99,7 @@ public class AiCodeGeneratorFacade {
                 //当所有代码块都拿到后，用代码解析器把一串的代码字符解析为结构化的HTML代码
                 String codeParing = stringBuilder.toString();
                 Object parserExecutor = CodeParserExetcutor.parserExecutor(codeParing, codeGenType);
-                File file = CodeFileSaveExecutor.codeFileSaveExecutor(parserExecutor, codeGenType);
+                File file = CodeFileSaveExecutor.codeFileSaveExecutor(parserExecutor, codeGenType,appId);
                 log.info("MultiFileCode文件保存成功,路径为:{}",file.getAbsolutePath());
             } catch (Exception e) {
                 log.error("解析MultiFileCode代码出错,保存MultiFileCode文件失败");

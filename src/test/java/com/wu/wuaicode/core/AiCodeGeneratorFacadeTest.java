@@ -19,12 +19,14 @@ class AiCodeGeneratorFacadeTest {
 
     @Test
     void generateCodeAndSave() {
-        File file = aiCodeGeneratorFacade.generateCodeAndSave("给我创建一个关于分享钓鱼的网站，代码不超过60行", CodeGenTypeEnum.MULTI_FILE);
+        Long appId = 8L;
+        File file = aiCodeGeneratorFacade.generateCodeAndSave("给我创建一个关于分享钓鱼的网站，代码不超过60行", CodeGenTypeEnum.MULTI_FILE,appId);
     }
 
     @Test
     void generateCodeAndSaveStream() {
-        Flux<String> stringFlux = aiCodeGeneratorFacade.generateCodeAndSaveStream("给我创建一个关于分享钓鱼的网站，代码不超过60行", CodeGenTypeEnum.MULTI_FILE);
+        Long appId = 12L;
+        Flux<String> stringFlux = aiCodeGeneratorFacade.generateCodeAndSaveStream("给我创建一个关于分享钓鱼的网站，代码不超过60行", CodeGenTypeEnum.MULTI_FILE,appId);
         List<String> block = stringFlux.collectList().block();
         Assertions.assertNotNull(block);
         String join = String.join("", block);

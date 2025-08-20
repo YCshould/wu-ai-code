@@ -24,11 +24,11 @@ public abstract class CodeFileSaveTemplate<T> {
      * @param content
      * @return
      */
-    public final File saveCode(T content) {
+    public final File saveCode(T content,Long appId) {
         //验证输入内容合法性
         validateContent(content);
         //定义文件路径,可交给子类去实现
-        String filedPath = filePath();
+        String filedPath = filePath(appId);
         //保存代码文件（有可能多个代码文件）
         saveFile(content, filedPath);
         return new File(filedPath);
@@ -51,9 +51,9 @@ public abstract class CodeFileSaveTemplate<T> {
      * 定义文件路径
      */
     //定义文件路径
-    protected final String filePath(){
+    protected final String filePath(Long appId){
         String bizType = getCodeType().getValue();
-        String uniquefilename = StrUtil.format("{}_{}", bizType, IdUtil.getSnowflakeNextId());
+        String uniquefilename = StrUtil.format("{}_{}", bizType, appId);
         String filepath=FILE_PATH+File.separator+uniquefilename;
         mkdir(filepath);
         return filepath;
