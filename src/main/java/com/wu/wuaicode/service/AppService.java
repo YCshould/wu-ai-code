@@ -4,7 +4,9 @@ import com.mybatisflex.core.query.QueryWrapper;
 import com.mybatisflex.core.service.IService;
 import com.wu.wuaicode.model.dto.app.AppQueryRequest;
 import com.wu.wuaicode.model.entity.App;
+import com.wu.wuaicode.model.entity.User;
 import com.wu.wuaicode.model.vo.app.AppVO;
+import reactor.core.publisher.Flux;
 
 import java.util.List;
 
@@ -35,5 +37,19 @@ public interface AppService extends IService<App> {
      * @return
      */
      List<AppVO> getAppVOList(List<App> appList);
+
+    /**
+     * 生成应用代码服务
+     * @return
+     */
+    Flux<String> chatGneCode(Long appId, String message, User loginUser);
+
+    /**
+     * 部署应用
+     * @param appId
+     * @param loginUser
+     * @return
+     */
+    String deployApp(Long appId, User loginUser);
 
 }

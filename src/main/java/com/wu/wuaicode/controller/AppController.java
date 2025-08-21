@@ -2,6 +2,8 @@ package com.wu.wuaicode.controller;
 
 import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.util.StrUtil;
+import cn.hutool.extra.ssh.JschUtil;
+import cn.hutool.json.JSONUtil;
 import com.mybatisflex.core.paginate.Page;
 import com.mybatisflex.core.query.QueryWrapper;
 import com.wu.wuaicode.annotation.AuthCheck;
@@ -13,10 +15,7 @@ import com.wu.wuaicode.constant.UserConstant;
 import com.wu.wuaicode.exception.BusinessException;
 import com.wu.wuaicode.exception.ErrorCode;
 import com.wu.wuaicode.exception.ThrowUtils;
-import com.wu.wuaicode.model.dto.app.AppAddRequest;
-import com.wu.wuaicode.model.dto.app.AppAdminUpdateRequest;
-import com.wu.wuaicode.model.dto.app.AppQueryRequest;
-import com.wu.wuaicode.model.dto.app.AppUpdateRequest;
+import com.wu.wuaicode.model.dto.app.*;
 import com.wu.wuaicode.model.entity.App;
 import com.wu.wuaicode.model.entity.User;
 import com.wu.wuaicode.model.enums.CodeGenTypeEnum;
@@ -25,10 +24,15 @@ import com.wu.wuaicode.service.AppService;
 import com.wu.wuaicode.service.UserService;
 import jakarta.annotation.Resource;
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.http.MediaType;
+import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.*;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/app")
@@ -39,6 +43,65 @@ public class AppController {
 
     @Resource
     private AppService appService;
+
+
+    /**
+     * 应用部署
+     *
+     * @param appDeployRequest 部署请求
+     * @param request          请求
+     * @return 部署 URL
+     */
+    @PostMapping("/deploy")
+    public BaseResponse<String> deployApp(@RequestBody AppDeployRequest appDeployRequest, HttpServletRequest request) {
+        ThrowUtils.throwIf(appDeployRequest == null, ErrorCode.PARAMS_ERROR);
+        Long appId = appDeployRequest.getAppId();
+        ThrowUtils.throwIf(appId == null || appId <= 0, ErrorCode.PARAMS_ERROR, "应用 ID 不能为空");
+        // 获取当前登录用户
+        User loginUser = userService.getLoginUser(request);
+        // 调用服务部署应用
+        String deployUrl = appService.deployApp(appId, loginUser);
+        return ResultUtils.success(deployUrl);
+    }
+
+
+
+    /**
+     * 应用聊天生成代码（流式 SSE）
+     *
+     * @param appId   应用 ID
+     * @param message 用户消息
+     * @param request 请求对象
+     * @return 生成结果流
+     */
+    //直接返回Flux<String>前端接受的数据会丢失空格，所以要额外给<String>封装一个ServerSentEvent
+    @GetMapping(value = "/chat/gen/code", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public Flux<ServerSentEvent<String>> chatToGenCode(@RequestParam Long appId,
+                                      @RequestParam String message,
+                                      HttpServletRequest request) {
+        // 参数校验
+        ThrowUtils.throwIf(appId == null || appId <= 0, ErrorCode.PARAMS_ERROR, "应用ID无效");
+        ThrowUtils.throwIf(StrUtil.isBlank(message), ErrorCode.PARAMS_ERROR, "用户消息不能为空");
+        // 获取当前登录用户
+        User loginUser = userService.getLoginUser(request);
+        // 调用服务生成代码（流式）
+        Flux<String> stringFlux = appService.chatGneCode(appId, message, loginUser);
+        //直接返回Flux<String>前端接受的数据会丢失空格，所以要额外给<String>封装一个ServerSentEvent
+        return stringFlux.map(  //对数据流中的每个元素进行1:1转换,map映射。
+                chunk->{
+                    Map<String, String> mapChunk = Map.of("d", chunk);
+                    //再将map转为json字符串
+                    String jsonStr = JSONUtil.toJsonStr(mapChunk);
+                    //再封装成ServerSentEvent
+                    return ServerSentEvent.<String>builder().data(jsonStr).build();
+                }
+        ).concatWith(  // 最后再加上一个done事件，表示代码生成结束，在原始流结束后追加新事件（非阻塞连接）
+                Mono.just(  //单元素流（Mono），包含一个自定义事件，Fulx是多元流
+                        ServerSentEvent.<String>builder().event("done").data("").build()
+                )
+        );
+    }
+
 
     /**
      * 创建应用
