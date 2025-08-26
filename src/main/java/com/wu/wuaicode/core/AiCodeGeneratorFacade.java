@@ -1,13 +1,21 @@
 package com.wu.wuaicode.core;
 
+import cn.hutool.json.JSONUtil;
 import com.wu.wuaicode.ai.AiCodeGeneratorService;
+import com.wu.wuaicode.ai.AiGeneratorServiceFactory;
 import com.wu.wuaicode.ai.model.HtmlCodeResult;
 import com.wu.wuaicode.ai.model.MultiFileCodeResult;
+import com.wu.wuaicode.ai.model.message.AiResponseMessage;
+import com.wu.wuaicode.ai.model.message.ToolExecutedMessage;
+import com.wu.wuaicode.ai.model.message.ToolRequestMessage;
 import com.wu.wuaicode.core.parser.CodeParserExetcutor;
 import com.wu.wuaicode.core.saver.CodeFileSaveExecutor;
 import com.wu.wuaicode.exception.BusinessException;
 import com.wu.wuaicode.exception.ErrorCode;
 import com.wu.wuaicode.model.enums.CodeGenTypeEnum;
+import dev.langchain4j.model.chat.response.ChatResponse;
+import dev.langchain4j.service.TokenStream;
+import dev.langchain4j.service.tool.ToolExecution;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -22,10 +30,12 @@ import java.io.File;
 @Slf4j
 public class AiCodeGeneratorFacade {
 
+
     @Resource
-    private AiCodeGeneratorService aiCodeGeneratorService;
+    private AiGeneratorServiceFactory generatorServiceFactory;
 
     /**
+     * 非流式调用
      * 后续只调用这一个方法即可实现调用ai并保存文件
      * 普通ai模型
      * @param userMessage
@@ -33,6 +43,8 @@ public class AiCodeGeneratorFacade {
      * @return
      */
     public File generateCodeAndSave(String userMessage, CodeGenTypeEnum codeGenType,Long appId){
+
+        AiCodeGeneratorService aiCodeGeneratorService = generatorServiceFactory.getAiCodeGeneratorService(appId);
 
         if(codeGenType==null){
             throw new BusinessException(ErrorCode.SYSTEM_ERROR,"未知的代码生成类型");
@@ -70,6 +82,8 @@ public class AiCodeGeneratorFacade {
      */
     public Flux<String> generateCodeAndSaveStream(String userMessage, CodeGenTypeEnum codeGenType,Long appId){
 
+        AiCodeGeneratorService aiCodeGeneratorService = generatorServiceFactory.getAiCodeGeneratorService(appId,codeGenType);
+
         if(codeGenType==null){
             throw new BusinessException(ErrorCode.SYSTEM_ERROR,"未知的代码生成类型");
         }
@@ -81,6 +95,10 @@ public class AiCodeGeneratorFacade {
             case MULTI_FILE -> {
                 Flux<String> multFileStream = aiCodeGeneratorService.generateMultFileCodeStream(userMessage);
                 yield  generateAndSaveStream(multFileStream, CodeGenTypeEnum.MULTI_FILE,appId);
+            }
+            case VUE_PROJECT -> {
+                TokenStream tokenStream = aiCodeGeneratorService.generateVueProjectCodeStream(appId, userMessage);
+                yield  processTokenStream(tokenStream);
             }
             default -> {
                 throw new BusinessException(ErrorCode.SYSTEM_ERROR,"未知的代码生成类型");
@@ -131,6 +149,37 @@ public class AiCodeGeneratorFacade {
 //        });
 //        return result;
 //    }
+    /**
+     * 将 TokenStream 转换为 Flux<String>，并传递工具调用信息
+     *
+     * @param tokenStream TokenStream 对象
+     * @return Flux<String> 流式响应
+     */
+    private Flux<String> processTokenStream(TokenStream tokenStream) {
+        return Flux.create(sink -> {
+            tokenStream.onPartialResponse((String partialResponse) -> {
+                        AiResponseMessage aiResponseMessage = new AiResponseMessage(partialResponse);
+                        sink.next(JSONUtil.toJsonStr(aiResponseMessage));
+                    })
+                    .onPartialToolExecutionRequest((index, toolExecutionRequest) -> {
+                        ToolRequestMessage toolRequestMessage = new ToolRequestMessage(toolExecutionRequest);
+                        sink.next(JSONUtil.toJsonStr(toolRequestMessage));
+                    })
+                    .onToolExecuted((ToolExecution toolExecution) -> {
+                        ToolExecutedMessage toolExecutedMessage = new ToolExecutedMessage(toolExecution);
+                        sink.next(JSONUtil.toJsonStr(toolExecutedMessage));
+                    })
+                    .onCompleteResponse((ChatResponse response) -> {
+                        sink.complete();
+                    })
+                    .onError((Throwable error) -> {
+                        error.printStackTrace();
+                        sink.error(error);
+                    })
+                    .start();
+        });
+    }
+
 
 }
 
