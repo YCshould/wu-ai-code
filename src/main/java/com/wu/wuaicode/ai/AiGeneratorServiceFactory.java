@@ -2,7 +2,7 @@ package com.wu.wuaicode.ai;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
-import com.wu.wuaicode.ai.tools.FileWriteTool;
+import com.wu.wuaicode.ai.tools.*;
 import com.wu.wuaicode.exception.BusinessException;
 import com.wu.wuaicode.exception.ErrorCode;
 import com.wu.wuaicode.model.enums.CodeGenTypeEnum;
@@ -30,13 +30,16 @@ public class AiGeneratorServiceFactory {
     private StreamingChatModel openAiStreamingChatModel;
 
     @Resource
-    private StreamingChatModel reasoningStreamingChatModel;
+    private StreamingChatModel reasoningStreamingChatModel;  // 这个bean是单独配置，用于流式推理模型
 
     @Resource
     private RedisChatMemoryStore redisChatMemoryStore;
 
     @Resource
     private ChatHistoryService chatHistoryService;
+
+    @Resource
+    private ToolManager toolManager;
 
 
     /**
@@ -96,7 +99,7 @@ public class AiGeneratorServiceFactory {
             case VUE_PROJECT -> AiServices.builder(AiCodeGeneratorService.class)
                     .streamingChatModel(reasoningStreamingChatModel)
                     .chatMemoryProvider(memoryId -> chatMemory)
-                    .tools(new FileWriteTool())
+                    .tools(toolManager.getAllTools())
                     .hallucinatedToolNameStrategy(toolExecutionRequest -> ToolExecutionResultMessage.from(
                             toolExecutionRequest, "Error: there is no tool called " + toolExecutionRequest.name()
                     ))

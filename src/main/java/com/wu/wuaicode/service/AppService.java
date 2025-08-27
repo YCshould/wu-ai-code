@@ -2,6 +2,7 @@ package com.wu.wuaicode.service;
 
 import com.mybatisflex.core.query.QueryWrapper;
 import com.mybatisflex.core.service.IService;
+import com.wu.wuaicode.model.dto.app.AppAddRequest;
 import com.wu.wuaicode.model.dto.app.AppQueryRequest;
 import com.wu.wuaicode.model.entity.App;
 import com.wu.wuaicode.model.entity.User;
@@ -43,6 +44,14 @@ public interface AppService extends IService<App> {
      * @return
      */
     Flux<String> chatGneCode(Long appId, String message, User loginUser);
+
+    /**
+     * 只是创建应用
+     * @param appAddRequest
+     * @param loginUser
+     * @return
+     */
+    Long createApp(AppAddRequest appAddRequest, User loginUser);
 
     /**
      * 部署应用

@@ -19,6 +19,7 @@ public class ReasoningStreamingChatModelConfig {
 
     /**
      * 推理流式模型（用于 Vue 项目生成，带工具调用）
+     * OpenAiStreamingChatModel这个模型配置支持TokenStream,可以流式输出工具调用信息
      */
     @Bean
     public StreamingChatModel reasoningStreamingChatModel() {

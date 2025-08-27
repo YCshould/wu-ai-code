@@ -7,6 +7,7 @@ import cn.hutool.core.util.RandomUtil;
 import cn.hutool.core.util.StrUtil;
 import com.mybatisflex.core.query.QueryWrapper;
 import com.mybatisflex.spring.service.impl.ServiceImpl;
+import com.wu.wuaicode.ai.AiCodeGenTypeRoutingService;
 import com.wu.wuaicode.constant.AppConstant;
 import com.wu.wuaicode.core.AiCodeGeneratorFacade;
 import com.wu.wuaicode.core.builder.VueProjectBuilder;
@@ -14,6 +15,7 @@ import com.wu.wuaicode.core.handler.StreamHandlerExecutor;
 import com.wu.wuaicode.exception.BusinessException;
 import com.wu.wuaicode.exception.ErrorCode;
 import com.wu.wuaicode.exception.ThrowUtils;
+import com.wu.wuaicode.model.dto.app.AppAddRequest;
 import com.wu.wuaicode.model.dto.app.AppQueryRequest;
 import com.wu.wuaicode.model.entity.App;
 import com.wu.wuaicode.mapper.AppMapper;
@@ -24,6 +26,7 @@ import com.wu.wuaicode.model.vo.app.AppVO;
 import com.wu.wuaicode.model.vo.user.UserVO;
 import com.wu.wuaicode.service.AppService;
 import com.wu.wuaicode.service.ChatHistoryService;
+import com.wu.wuaicode.service.ScreenshotService;
 import com.wu.wuaicode.service.UserService;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
@@ -62,6 +65,40 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
 
     @Resource
     private VueProjectBuilder vueProjectBuilder;
+
+    @Resource
+    private ScreenshotService screenshotService;
+
+    @Resource
+    private AiCodeGenTypeRoutingService aiCodeGenTypeRoutingService;
+
+    /**
+     * 只是创建应用
+     * @param appAddRequest
+     * @param loginUser
+     * @return
+     */
+    @Override
+    public Long createApp(AppAddRequest appAddRequest, User loginUser) {
+        // 参数校验
+        String initPrompt = appAddRequest.getInitPrompt();
+        ThrowUtils.throwIf(StrUtil.isBlank(initPrompt), ErrorCode.PARAMS_ERROR, "初始化 prompt 不能为空");
+        // 构造入库对象
+        App app = new App();
+        BeanUtil.copyProperties(appAddRequest, app);
+        app.setUserId(loginUser.getId());
+        // 应用名称暂时为 initPrompt 前 12 位
+        app.setAppName(initPrompt.substring(0, Math.min(initPrompt.length(), 12)));
+        // 使用 AI 智能选择代码生成类型
+        CodeGenTypeEnum selectedCodeGenType = aiCodeGenTypeRoutingService.routeCodeGenType(initPrompt);
+        app.setCodeGenType(selectedCodeGenType.getValue());
+        // 插入数据库
+        boolean result = this.save(app);
+        ThrowUtils.throwIf(!result, ErrorCode.OPERATION_ERROR);
+        log.info("应用创建成功，ID: {}, 类型: {}", app.getId(), selectedCodeGenType.getValue());
+        return app.getId();
+    }
+
 
 
     /**
@@ -125,10 +162,28 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
         updateApp.setDeployedTime(LocalDateTime.now());
         boolean updateResult = this.updateById(updateApp);
         ThrowUtils.throwIf(!updateResult, ErrorCode.OPERATION_ERROR, "更新应用部署信息失败");
-        // 10. 返回可访问的 URL
-        return String.format("%s/%s/", AppConstant.CODE_DEPLOY_HOST, deployKey);
+        // 10. 生成部署后可访问的 URL
+        String deployUrl = String.format("%s/%s/", AppConstant.CODE_DEPLOY_HOST, deployKey);
+        // 11、异步截图，并将截图后的文件上传到cos中
+        screenshotAndUpdate(appId,deployUrl);
+        return deployUrl;
     }
 
+
+    private void screenshotAndUpdate(long appId,String deployUrl){
+        Thread.startVirtualThread(()->{
+            // 1、完成截图并保存到cos,返回图片的访问路径
+            String cosUrl = screenshotService.screenshotUpdate(deployUrl);
+            // 2、保存图片的访问路径
+            App app=new App();
+            app.setId(appId);
+            app.setCover(cosUrl);
+            boolean b = this.updateById(app);
+            if (!b) {
+                throw new BusinessException(ErrorCode.OPERATION_ERROR,"更新应用封面到数据库失败");
+            }
+        });
+    }
 
     /**
      * 生成用户代码
