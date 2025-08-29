@@ -12,6 +12,7 @@ import com.wu.wuaicode.common.DeleteRequest;
 import com.wu.wuaicode.common.ResultUtils;
 import com.wu.wuaicode.constant.AppConstant;
 import com.wu.wuaicode.constant.UserConstant;
+import com.wu.wuaicode.core.handler.StreamHandlerExecutor;
 import com.wu.wuaicode.exception.BusinessException;
 import com.wu.wuaicode.exception.ErrorCode;
 import com.wu.wuaicode.exception.ThrowUtils;
@@ -33,6 +34,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.io.File;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -49,6 +51,7 @@ public class AppController {
 
     @Resource
     private ProjectDownloadService projectDownloadService;
+
 
     /**
      * 下载应用代码
@@ -137,7 +140,8 @@ public class AppController {
                     //再封装成ServerSentEvent
                     return ServerSentEvent.<String>builder().data(jsonStr).build();
                 }
-        ).concatWith(  // 最后再加上一个done事件，表示代码生成结束，在原始流结束后追加新事件（非阻塞连接）
+        )
+                .concatWith(  // 最后再加上一个done事件，表示代码生成结束，在原始流结束后追加新事件（非阻塞连接）
                 Mono.just(  //单元素流（Mono），包含一个自定义事件，Fulx是多元流
                         ServerSentEvent.<String>builder().event("done").data("").build()
                 )
