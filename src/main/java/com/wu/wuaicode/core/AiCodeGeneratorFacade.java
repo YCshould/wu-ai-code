@@ -1,5 +1,7 @@
 package com.wu.wuaicode.core;
 
+import cn.hutool.core.collection.ConcurrentHashSet;
+import cn.hutool.json.JSONObject;
 import cn.hutool.json.JSONUtil;
 import com.wu.wuaicode.ai.AiCodeGeneratorService;
 import com.wu.wuaicode.ai.AiGeneratorServiceFactory;
@@ -26,6 +28,7 @@ import reactor.core.publisher.Mono;
 
 import java.io.File;
 import java.time.Duration;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -174,7 +177,11 @@ public class AiCodeGeneratorFacade {
      * 将 TokenStream 转换为 Flux<String>，并增加熔断机制
      */
     private Flux<String> processTokenStream(TokenStream tokenStream) {
-        return Flux.create(sink -> {
+        // 1. 定义一个“结束信号”异常，用于强制打断流
+        class EndSignalException extends RuntimeException {
+            public EndSignalException(String message) { super(message); }
+        }
+        return Flux.<String>create(sink -> {
             // 1. 定义熔断计数器：防止 AI 无限生成文件
             // 根据你的 Prompt，Vue 项目大约 10-12 个文件，我们设 12 个作为安全上限
             AtomicInteger fileWriteCount = new AtomicInteger(0);
@@ -182,6 +189,7 @@ public class AiCodeGeneratorFacade {
             // 2. 【核心】全局停止标志位 (默认为 false)
             // 使用 AtomicBoolean 保证在不同回调中的可见性
             AtomicBoolean isForcedStop = new AtomicBoolean(false);
+            Set<String> writtenFiles = new ConcurrentHashSet<>();
 
             tokenStream.onPartialResponse((String partialResponse) -> {
                         // 2. 【关键词熔断】：如果 AI 说了“生成完毕”，直接强制结束
@@ -190,7 +198,8 @@ public class AiCodeGeneratorFacade {
                             log.info("检测到结束关键词，强制结束流");
                             sink.complete();
                             isForcedStop.set(true);
-                            return;
+                            sink.complete();
+                            throw new EndSignalException("NormalFinish");
                         }
                         AiResponseMessage aiResponseMessage = new AiResponseMessage(partialResponse);
                         sink.next(JSONUtil.toJsonStr(aiResponseMessage));
@@ -213,6 +222,34 @@ public class AiCodeGeneratorFacade {
                         // 假设你的工具名包含 "Write" 或 "write" (如 FileWriteTool)
                         if (toolName.toLowerCase().contains("write")) {
                             int current = fileWriteCount.incrementAndGet();
+                            // --- 【新增】重复文件检测逻辑 ---
+                            String args = toolExecution.request().arguments();
+                            // 简单解析出文件名，假设 args 里包含 "relativeFilePath": "src/App.vue"
+                            // 这里用简单的字符串匹配，或者你可以解析 JSON
+                            String filePath = null;
+                            try {
+                                JSONObject json = JSONUtil.parseObj(args);
+                                filePath = json.getStr("relativeFilePath");
+                            } catch (Exception e) {
+                                // 解析失败就算了
+                            }
+
+                            // 如果这个文件之前已经写过了 -> 判定为死循环 -> 立即杀掉
+                            if (filePath != null && writtenFiles.contains(filePath)) {
+                                log.warn("【严重】检测到 AI 正在重复写入文件: {}，判定为死循环，立即终止！", filePath);
+
+                                isForcedStop.set(true);
+                                // 发送结束信号给前端
+                                AiResponseMessage msg = new AiResponseMessage("\n\n> 系统监控：检测到重复生成行为，已强制完成构建。\n\n");
+                                sink.next(JSONUtil.toJsonStr(msg));
+                                sink.complete();
+                                throw new EndSignalException("DuplicateFile");
+                            }
+
+                            // 记录这个文件已写入
+                            if (filePath != null) {
+                                writtenFiles.add(filePath);
+                            }
                             log.info("AI 正在写入第 {} 个文件", current);
 
                             if (current > MAX_FILE_COUNT) {
@@ -225,7 +262,7 @@ public class AiCodeGeneratorFacade {
                                 AiResponseMessage msg_1 = new AiResponseMessage("\n\n> 项目构建即将完成，请稍等页面刷新\n\n");
                                 sink.next(JSONUtil.toJsonStr(msg_1));
                                 sink.complete();
-                                return;
+                                throw new EndSignalException("MaxCountLimit");
                             }
                         }
 
@@ -239,15 +276,21 @@ public class AiCodeGeneratorFacade {
                         sink.complete();
                     })
                     .onError((Throwable error) -> {
-                        // 如果是咱们自己抛出的强制停止信号，就忽略它，别打印报错
-                        if ("ForceStopAiGeneration".equals(error.getMessage())) {
-                            log.info("AI 生成流已按预期强制终止。");
+                        // 如果是我们自己抛出的结束信号，直接忽略，不要打印错误日志
+                        if (error instanceof EndSignalException) {
                             return;
                         }
-                        log.error("流式生成发生异常", error);
+                        log.error("流式生成发生未知异常", error);
                         sink.error(error);
                     })
                     .start();
+        }).onErrorResume(e -> {
+            if (e instanceof EndSignalException || e.getMessage().equals("EndSignalException")) {
+                log.info("流处理已通过熔断机制正常终止: {}", e.getMessage());
+                // 技巧：声明一个明确类型的变量，然后再 return，编译器就不会晕了
+                return Flux.empty();
+            }
+            return Flux.error(e);
         });
     }
 //    private Flux<String> processTokenStream(TokenStream tokenStream) {
