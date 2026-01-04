@@ -8,6 +8,8 @@ import com.wu.wuaicode.ai.model.MultiFileCodeResult;
 import com.wu.wuaicode.ai.model.message.AiResponseMessage;
 import com.wu.wuaicode.ai.model.message.ToolExecutedMessage;
 import com.wu.wuaicode.ai.model.message.ToolRequestMessage;
+import com.wu.wuaicode.constant.AppConstant;
+import com.wu.wuaicode.core.builder.VueProjectBuilder;
 import com.wu.wuaicode.core.parser.CodeParserExetcutor;
 import com.wu.wuaicode.core.saver.CodeFileSaveExecutor;
 import com.wu.wuaicode.exception.BusinessException;
@@ -24,6 +26,8 @@ import reactor.core.publisher.Mono;
 
 import java.io.File;
 import java.time.Duration;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 门面模式，对外提供服务
@@ -35,6 +39,9 @@ public class AiCodeGeneratorFacade {
 
     @Resource
     private AiGeneratorServiceFactory generatorServiceFactory;
+
+    @Resource
+    private VueProjectBuilder vueProjectBuilder;
 
     /**
      * 非流式调用
@@ -157,30 +164,116 @@ public class AiCodeGeneratorFacade {
      * @param tokenStream TokenStream 对象
      * @return Flux<String> 流式响应
      */
+    // 修改 AiCodeGeneratorFacade.java 中的 processTokenStream 方法
+
+    // 引入必要的包
+
+// ... 在类中找到 processTokenStream 方法并替换 ...
+
+    /**
+     * 将 TokenStream 转换为 Flux<String>，并增加熔断机制
+     */
     private Flux<String> processTokenStream(TokenStream tokenStream) {
         return Flux.create(sink -> {
+            // 1. 定义熔断计数器：防止 AI 无限生成文件
+            // 根据你的 Prompt，Vue 项目大约 10-12 个文件，我们设 12 个作为安全上限
+            AtomicInteger fileWriteCount = new AtomicInteger(0);
+            final int MAX_FILE_COUNT = 15;
+            // 2. 【核心】全局停止标志位 (默认为 false)
+            // 使用 AtomicBoolean 保证在不同回调中的可见性
+            AtomicBoolean isForcedStop = new AtomicBoolean(false);
+
             tokenStream.onPartialResponse((String partialResponse) -> {
+                        // 2. 【关键词熔断】：如果 AI 说了“生成完毕”，直接强制结束
+                        // 配合 Prompt 里的约束使用
+                        if (partialResponse.contains("项目生成完毕") || partialResponse.contains("done")) {
+                            log.info("检测到结束关键词，强制结束流");
+                            sink.complete();
+                            isForcedStop.set(true);
+                            return;
+                        }
                         AiResponseMessage aiResponseMessage = new AiResponseMessage(partialResponse);
                         sink.next(JSONUtil.toJsonStr(aiResponseMessage));
                     })
                     .onPartialToolExecutionRequest((index, toolExecutionRequest) -> {
+                        // 如果已熔断，直接返回，不再执行后续计数逻辑
+                        if (isForcedStop.get()) {
+                            return;
+                        }
                         ToolRequestMessage toolRequestMessage = new ToolRequestMessage(toolExecutionRequest);
                         sink.next(JSONUtil.toJsonStr(toolRequestMessage));
                     })
                     .onToolExecuted((ToolExecution toolExecution) -> {
+                        // 【新增】如果已经标记停止，直接忽略后续的任何工具调用，不再处理
+                        if (isForcedStop.get()) {
+                            return;
+                        }
+                        // 3. 【数量熔断】：监控“写入文件”工具的调用次数
+                        String toolName = toolExecution.request().name();
+                        // 假设你的工具名包含 "Write" 或 "write" (如 FileWriteTool)
+                        if (toolName.toLowerCase().contains("write")) {
+                            int current = fileWriteCount.incrementAndGet();
+                            log.info("AI 正在写入第 {} 个文件", current);
+
+                            if (current > MAX_FILE_COUNT) {
+                                log.warn("【严重】检测到 AI 死循环（文件数 > {}），强制熔断截断流！", MAX_FILE_COUNT);
+                                // A. 立即设置停止标志！关上大门！
+                                isForcedStop.set(true);
+                                // 【修改点 2】：先给前端发一条提示消息，让用户知道发生了什么
+                                AiResponseMessage msg = new AiResponseMessage("\n\n> 系统提示：检测到生成文件数量较多，已强制截断生成流，即将进入构建阶段...\n\n");
+                                sink.next(JSONUtil.toJsonStr(msg));
+                                AiResponseMessage msg_1 = new AiResponseMessage("\n\n> 项目构建即将完成，请稍等页面刷新\n\n");
+                                sink.next(JSONUtil.toJsonStr(msg_1));
+                                sink.complete();
+                                return;
+                            }
+                        }
+
                         ToolExecutedMessage toolExecutedMessage = new ToolExecutedMessage(toolExecution);
                         sink.next(JSONUtil.toJsonStr(toolExecutedMessage));
                     })
                     .onCompleteResponse((ChatResponse response) -> {
+                        if (!isForcedStop.get()) {
+                            sink.complete();
+                        }
                         sink.complete();
                     })
                     .onError((Throwable error) -> {
-                        error.printStackTrace();
+                        // 如果是咱们自己抛出的强制停止信号，就忽略它，别打印报错
+                        if ("ForceStopAiGeneration".equals(error.getMessage())) {
+                            log.info("AI 生成流已按预期强制终止。");
+                            return;
+                        }
+                        log.error("流式生成发生异常", error);
                         sink.error(error);
                     })
                     .start();
         });
     }
+//    private Flux<String> processTokenStream(TokenStream tokenStream) {
+//        return Flux.create(sink -> {
+//            tokenStream.onPartialResponse((String partialResponse) -> {
+//                        AiResponseMessage aiResponseMessage = new AiResponseMessage(partialResponse);
+//                        sink.next(JSONUtil.toJsonStr(aiResponseMessage));
+//                    })
+//                    .onPartialToolExecutionRequest((index, toolExecutionRequest) -> {
+//                        ToolRequestMessage toolRequestMessage = new ToolRequestMessage(toolExecutionRequest);
+//                        sink.next(JSONUtil.toJsonStr(toolRequestMessage));
+//                    })
+//                    .onToolExecuted((ToolExecution toolExecution) -> {
+//                        ToolExecutedMessage toolExecutedMessage = new ToolExecutedMessage(toolExecution);
+//                        sink.next(JSONUtil.toJsonStr(toolExecutedMessage));
+//                    })
+//                    .onCompleteResponse((ChatResponse response) -> {
+//                        sink.complete();
+//                    })
+//                    .onError((Throwable error) -> {
+//                        error.printStackTrace();
+//                        sink.error(error);
+//                    })
+//                    .start();
+//        });
+//    }
 
 
 }

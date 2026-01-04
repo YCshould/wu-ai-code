@@ -88,6 +88,8 @@ public class WebScreenshotUtils {
     private static WebDriver initChromeDriver(int width, int height) {
         try {
             // 自动管理 ChromeDriver
+            // 在 setup 之前设置代理
+            WebDriverManager.chromedriver().proxy("127.0.0.1:7897").setup();
             WebDriverManager.chromedriver().setup();
             // 配置 Chrome 选项
             ChromeOptions options = new ChromeOptions();

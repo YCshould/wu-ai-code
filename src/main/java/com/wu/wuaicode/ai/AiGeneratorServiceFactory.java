@@ -94,12 +94,14 @@ public class AiGeneratorServiceFactory {
             case VUE_PROJECT -> {
                 StreamingChatModel streamingChatModelPrototype = SpringContextUtil.getBean("reasoningStreamingChatModelPrototype", StreamingChatModel.class);
                 yield  AiServices.builder(AiCodeGeneratorService.class)
+                        .chatModel(chatModel)  // 【重要】添加普通模型配置，与 streamingChatModel 配合使用
                         .streamingChatModel(streamingChatModelPrototype)
                         .chatMemoryProvider(memoryId -> chatMemory)
                         .tools(toolManager.getAllTools())
                         .hallucinatedToolNameStrategy(toolExecutionRequest -> ToolExecutionResultMessage.from(
                                 toolExecutionRequest, "Error: there is no tool called " + toolExecutionRequest.name()
                         ))
+                        .maxSequentialToolsInvocations(12)  // 【重要】限制最多12次工具调用，防止无限循环
                         .build();
             }
             // HTML 和多文件生成使用默认模型

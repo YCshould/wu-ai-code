@@ -83,13 +83,13 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
     public Long createApp(AppAddRequest appAddRequest, User loginUser) {
         // 参数校验
         String initPrompt = appAddRequest.getInitPrompt();
-        String processInitPrompt="你必须遵守整个项目代码总量必须少于600行,"+initPrompt;
+        log.info(initPrompt);
         ThrowUtils.throwIf(StrUtil.isBlank(initPrompt), ErrorCode.PARAMS_ERROR, "初始化 prompt 不能为空");
         // 构造入库对象
         App app = new App();
         BeanUtil.copyProperties(appAddRequest, app);
         app.setUserId(loginUser.getId());
-        app.setInitPrompt(processInitPrompt);
+        app.setInitPrompt(initPrompt);
         // 应用名称暂时为 initPrompt 前 12 位
         app.setAppName(initPrompt.substring(0, Math.min(initPrompt.length(), 12)));
         // 使用 AI 智能选择代码生成类型
